@@ -15,6 +15,11 @@ safetensors
 # --- 后训练 (SFT) ---
 peft>=0.13            # LoRA / QLoRA 适配器, pipeline/sft.py 使用
 
+# --- QLoRA 微调 Qwen2.5 (finetune_qlora.py, GPU) ---
+bitsandbytes>=0.45    # 4bit 量化加载 (Windows/Py3.11 建议 0.45.x)
+datasets>=2.20
+huggingface_hub
+
 # --- GGUF 导出与量化校验 ---
 gguf>=0.10             # 写 GGUF 与读取词表元数据 (pipeline/write_gguf.py, spec_decode.py)
 

@@ -235,6 +235,35 @@ python pipeline/write_gguf.py --hf-dir models/tinyllm-hf-sft --out models/tinyll
 python pipeline/quantize_sweep.py --input models/tinyllm-sft-f16.gguf --schemes Q4_K_M
 ```
 
+### 5. GPU QLoRA fine-tuning of Qwen2.5-3B (real-scale model, 8GB VRAM)
+
+Fine-tune a real 3B instruct model on a consumer GPU (tested on RTX 4060 Ti 8GB),
+then export, quantize and benchmark decode speedup:
+
+```bash
+# 1) GPU env: Python 3.11 + CUDA torch + bitsandbytes/peft (see requirements.txt)
+#    pip install torch --index-url https://download.pytorch.org/whl/cu124
+# 2) fine-tune (auto-downloads Qwen2.5-3B-Instruct 6.2GB + alpaca-zh via HF mirror)
+python pipeline/finetune_qlora.py --model models/Qwen2.5-3B-Instruct --samples 1200
+#    artifacts: models/qwen25-3b-lora (adapter) + models/qwen25-3b-merged (merged FP16)
+
+# 3) export GGUF + three quantization tiers
+python D:/tools/llama.cpp/convert_hf_to_gguf.py models/qwen25-3b-merged \
+    --outfile models/qwen25-3b-ft-f16.gguf --outtype f16
+D:/tools/llama.cpp/bin/llama-quantize.exe models/qwen25-3b-ft-f16.gguf models/qwen25-3b-ft-q8_0.gguf Q8_0
+D:/tools/llama.cpp/bin/llama-quantize.exe models/qwen25-3b-ft-f16.gguf models/qwen25-3b-ft-q4_k_m.gguf Q4_K_M
+
+# 4) quantization speedup benchmark (llama-bench, prints a comparison table)
+python pipeline/bench_quant.py --llama-cpp D:/tools/llama.cpp
+```
+
+Measured on RTX 4060 Ti 8GB: Q4_K_M decodes at 107 tok/s (3.6x vs F16); the base
+model's F16 only manages 13.5 tok/s because it spills out of VRAM — Q4 hits 108
+tok/s (8x). Full data in `bench/report.md`.
+
+> Loading a 3B model needs ~10GB of RAM/page-file commit. If you hit
+> "page file is too small", grow the page file or close memory-hungry apps.
+
 ### Recommended experiment order (to collect all the numbers)
 
 ```text

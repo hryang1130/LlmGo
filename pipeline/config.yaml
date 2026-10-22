@@ -91,6 +91,26 @@ sft:                          # sft.py 的默认参数
   lora_alpha: 16
   lora_dropout: 0.05
 
+finetune:                     # finetune_qlora.py 的默认参数 (GPU QLoRA, 8GB 显存可跑 3B)
+  base_model: Qwen/Qwen2.5-3B-Instruct
+  dataset: shibing624/alpaca-zh
+  samples: 1200               # 0 = 全量
+  seq_len: 768
+  epochs: 1
+  batch_size: 1
+  grad_accum: 8
+  learning_rate: 2.0e-4
+  lora_r: 16
+  load_in_4bit: true          # false 则用 bf16 LoRA (需要更多显存)
+  adapter_dir: models/qwen25-3b-lora
+  merged_dir: models/qwen25-3b-merged
+
+bench:                        # bench_quant.py 的默认参数 (llama-bench 量化加速对比)
+  ngl: 99                     # GPU offload 层数
+  prompt_tokens: 512
+  decode_tokens: 128
+  reps: 3
+
 serve:
   llama_server_url: http://127.0.0.1:8081   # llama.cpp server 地址
   gateway_port: 8080                        # Go 网关监听端口

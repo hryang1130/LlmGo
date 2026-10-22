@@ -218,6 +218,32 @@ make sft → 导出量化 → 再 make eval                # 对比微调前后�
 
 每一步的 Markdown 报告都在 `out/` 下，可以直接作为实验记录或写进技术总结。
 
+### 5. GPU QLoRA 微调 Qwen2.5-3B（真实规模模型, 8GB 显存）
+
+在消费级 GPU（RTX 4060 Ti 8GB 实测）上微调真实的 3B 指令模型，再导出、量化并对比 decode 加速：
+
+```bash
+# 1) GPU 环境: Python 3.11 + CUDA 版 torch + bitsandbytes/peft（见 requirements.txt）
+#    pip install torch --index-url https://download.pytorch.org/whl/cu124
+# 2) 微调（首次运行自动从 HF 镜像下载 Qwen2.5-3B-Instruct 6.2GB 与 alpaca-zh 数据集）
+python pipeline/finetune_qlora.py --model models/Qwen2.5-3B-Instruct --samples 1200
+#    产物: models/qwen25-3b-lora（适配器）+ models/qwen25-3b-merged（合并 FP16）
+
+# 3) 导出 GGUF + 三档量化
+python D:/tools/llama.cpp/convert_hf_to_gguf.py models/qwen25-3b-merged \
+    --outfile models/qwen25-3b-ft-f16.gguf --outtype f16
+D:/tools/llama.cpp/bin/llama-quantize.exe models/qwen25-3b-ft-f16.gguf models/qwen25-3b-ft-q8_0.gguf Q8_0
+D:/tools/llama.cpp/bin/llama-quantize.exe models/qwen25-3b-ft-f16.gguf models/qwen25-3b-ft-q4_k_m.gguf Q4_K_M
+
+# 4) 量化加速基准（llama-bench, 输出对比表）
+python pipeline/bench_quant.py --llama-cpp D:/tools/llama.cpp
+```
+
+4060 Ti 8GB 实测：Q4_K_M decode 107 tok/s（约为 F16 的 3.6 倍）；基座模型因显存不足
+F16 仅 13.5 tok/s，Q4 达 108 tok/s（8 倍）。完整数据见 `bench/report.md`。
+
+> 加载 3B 模型需要约 10GB 内存/页面文件配额；若报「页面文件太小」，请扩容虚拟内存或关闭大内存程序。
+
 ## 手动安装部署教程
 
 从零在一台新机器上跑通全流程（以 Windows 为例，Linux/macOS 同理，路径换成对应格式）。
