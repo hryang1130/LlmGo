@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -99,8 +100,10 @@ func workflowDef() WFDef {
 				Desc: "llama-server 加载量化模型, 等待健康检查通过",
 				Params: []WFParam{
 					{Key: "llama_server_bin", Label: "llama-server 路径", Default: "llama-server"},
+					{Key: "model", Label: "模型文件(models/下)", Default: "tinyllm-q4_k_m.gguf"},
 					{Key: "ctx_size", Label: "上下文长度", Default: "512"},
 					{Key: "port", Label: "服务端口", Default: "8081"},
+					{Key: "ngl", Label: "GPU offload 层数(0=CPU)", Default: "0"},
 				},
 			},
 			{
@@ -157,6 +160,35 @@ func workflowDef() WFDef {
 					{Key: "draft", Label: "draft 模型", Default: "models/tinyllm-q4_k_m.gguf"},
 					{Key: "target", Label: "target 模型", Default: "models/tinyllm-target-q4_k_m.gguf"},
 					{Key: "draft_max", Label: "单次最多猜测", Default: "8"},
+				},
+			},
+
+			// ---------- GPU 真实模型 (可选节点: Qwen2.5-3B QLoRA 全链路) ----------
+			{
+				ID: "finetune", Label: "Qwen2.5 QLoRA 微调", Icon: "🧬", X: 60, Y: 680,
+				Desc: "GPU 4bit QLoRA 微调 Qwen2.5-3B-Instruct (alpaca-zh) 并合并 FP16, 需 8GB+ 显存",
+				Optional: true,
+				Params: []WFParam{
+					{Key: "python", Label: "GPU 环境解释器", Default: "D:/envs/llm_gpu/Scripts/python.exe"},
+					{Key: "model", Label: "基座模型/本地目录", Default: "models/Qwen2.5-3B-Instruct"},
+					{Key: "samples", Label: "训练样本数(0=全部)", Default: "1200"},
+					{Key: "epochs", Label: "训练轮数", Default: "1"},
+					{Key: "seq_len", Label: "序列长度", Default: "768"},
+					{Key: "lora_r", Label: "LoRA rank", Default: "16"},
+					{Key: "load_4bit", Label: "4bit 加载(1/0)", Default: "1"},
+				},
+			},
+			{
+				ID: "bench", Label: "量化加速基准", Icon: "🏁", X: 320, Y: 680,
+				Desc: "llama-bench 对比各量化档位的 prompt/decode 速度, 报告写入 bench/",
+				Optional: true,
+				Params: []WFParam{
+					{Key: "llamacpp_dir", Label: "llama.cpp 目录(CUDA 二进制)", Default: "D:/tools/llama.cpp"},
+					{Key: "models", Label: "gguf 列表(逗号分隔, 空=全部)", Default: ""},
+					{Key: "ngl", Label: "GPU offload 层数", Default: "99"},
+					{Key: "pp", Label: "Prompt tokens", Default: "512"},
+					{Key: "tg", Label: "Decode tokens", Default: "128"},
+					{Key: "reps", Label: "重复次数", Default: "3"},
 				},
 			},
 		},
@@ -353,7 +385,12 @@ func (r *workflowRunner) runNode(ctx context.Context, node string, req *runReque
 		bin := r.param(req, node, "llama_server_bin", "llama-server")
 		port := r.param(req, node, "port", "8081")
 		ctxSize := r.param(req, node, "ctx_size", "512")
-		model := filepath.Join(r.root, "models", "tinyllm-q4_k_m.gguf")
+		ngl := r.param(req, node, "ngl", "0")
+		modelName := r.param(req, node, "model", "tinyllm-q4_k_m.gguf")
+		model := filepath.Join(r.root, "models", modelName)
+		if filepath.IsAbs(modelName) {
+			model = modelName
+		}
 		binPath := bin
 		if !filepath.IsAbs(binPath) {
 			// 尝试 <llamacpp>/build/bin/ 下找
@@ -379,8 +416,11 @@ func (r *workflowRunner) runNode(ctx context.Context, node string, req *runReque
 		// 注意: 用独立的 context (不是本次运行的 ctx) —— llama-server 要一直活着,
 		// 否则工作流一结束就会被 CommandContext 杀掉, 用户拿不到可用的服务。
 		// 只有 /api/cancel 或再次运行 deploy 才会停止它。
-		ls := exec.CommandContext(context.Background(), binPath,
-			"-m", model, "--host", "127.0.0.1", "--port", port, "--ctx-size", ctxSize)
+		lsArgs := []string{"-m", model, "--host", "127.0.0.1", "--port", port, "--ctx-size", ctxSize}
+		if n, err := strconv.Atoi(ngl); err == nil && n > 0 {
+			lsArgs = append(lsArgs, "-ngl", ngl)
+		}
+		ls := exec.CommandContext(context.Background(), binPath, lsArgs...)
 		ls.Dir = r.root
 		// 输出落到日志文件, 启动失败时回显末尾几行 (否则用户只看到"健康检查超时")
 		logPath := filepath.Join(r.root, "out", "llama-server-deploy.log")
@@ -561,6 +601,43 @@ func (r *workflowRunner) runNode(ctx context.Context, node string, req *runReque
 		cmd = exec.CommandContext(ctx, r.pythonCmd, "pipeline/spec_decode.py",
 			"--llama-cpp", dir, "--draft", draft, "--target", target,
 			"--draft-max", dmax)
+		cmd.Dir = r.root
+
+	// ---------- GPU 真实模型 (可选节点) ----------
+	case "finetune":
+		// Qwen2.5-3B QLoRA 需要 CUDA 版 torch + bitsandbytes, 用独立的 GPU 解释器
+		py := r.param(req, node, "python", "D:/envs/llm_gpu/Scripts/python.exe")
+		model := r.param(req, node, "model", "models/Qwen2.5-3B-Instruct")
+		samples := r.param(req, node, "samples", "1200")
+		epochs := r.param(req, node, "epochs", "1")
+		seqLen := r.param(req, node, "seq_len", "768")
+		loraR := r.param(req, node, "lora_r", "16")
+		load4bit := r.param(req, node, "load_4bit", "1")
+		args := []string{"-u", "pipeline/finetune_qlora.py",
+			"--model", model, "--samples", samples, "--epochs", epochs,
+			"--seq-len", seqLen, "--lora-r", loraR}
+		if load4bit == "0" {
+			args = append(args, "--no-4bit")
+		}
+		cmd = exec.CommandContext(ctx, py, args...)
+		cmd.Dir = r.root
+
+	case "bench":
+		dir := r.param(req, node, "llamacpp_dir", "D:/tools/llama.cpp")
+		ngl := r.param(req, node, "ngl", "99")
+		pp := r.param(req, node, "pp", "512")
+		tg := r.param(req, node, "tg", "128")
+		reps := r.param(req, node, "reps", "3")
+		args := []string{"pipeline/bench_quant.py", "--llama-cpp", dir,
+			"--ngl", ngl, "--pp", pp, "--tg", tg, "--reps", reps}
+		if list := strings.TrimSpace(r.param(req, node, "models", "")); list != "" {
+			for _, m := range strings.Split(list, ",") {
+				if m = strings.TrimSpace(m); m != "" {
+					args = append(args, "--gguf", m)
+				}
+			}
+		}
+		cmd = exec.CommandContext(ctx, r.pythonCmd, args...)
 		cmd.Dir = r.root
 
 	default:
