@@ -86,16 +86,18 @@ def cell_status(needles: list[str], exps: dict) -> tuple[str, str]:
     hits = []
     for n in needles:
         if n.startswith("experiment:"):
-            name = n.split(":", 1)[1]
-            if name == "__any__":
+            spec = n.split(":", 1)[1]
+            if spec == "__any__":
                 if exps:
                     hits.append(f"{sum(len(v) for v in exps.values())} 条实验记录")
                 continue
-            names = {name, name + "_qwen", name + "_tinyllm"} if name == "eval" else {name}
-            for nm in list(names):
-                if nm in exps:
-                    labels = ", ".join(e["label"] for e in exps[nm])
-                    hits.append(f"实验记录 {nm} ({labels})")
+            base, _, tag = spec.partition("_")
+            docs = list(exps.get(base, []))
+            if tag:
+                docs = [e for e in docs if tag in (e["label"] or "").lower()]
+            if docs:
+                labels = ", ".join(e["label"] for e in docs)
+                hits.append(f"实验记录 {base} ({labels})")
         else:
             p = ROOT / n
             if p.exists():
@@ -122,7 +124,7 @@ def main():
         sections.append((group["line"], markdown_table(
             ["阶段", "状态", "证据 (产物/实验记录)", "怎么跑"], rows)))
 
-    lines = [f"# 实验矩阵 — 完成 {n_done}/{n_all} 格", "",
+    lines = ["",
              f"_矩阵由 pipeline/matrix.py 扫描磁盘产物与 out/experiments/ 自动生成, "
              f"不依赖手工登记。_",
              ""]

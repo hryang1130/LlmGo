@@ -227,8 +227,11 @@ def wait_for_http(url: str, timeout: float = 90.0) -> bool:
         try:
             with opener.open(url, timeout=3):
                 return True
-        except urllib.error.HTTPError:
-            return True          # 有响应即视为可用
+        except urllib.error.HTTPError as e:
+            if e.code in (502, 503, 504):
+                time.sleep(0.5)   # 模型还在加载, 服务未就绪
+                continue
+            return True           # 404/405 等说明 HTTP 服务本身已响应
         except Exception:
             time.sleep(0.5)
     return False
