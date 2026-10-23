@@ -27,6 +27,13 @@
         │ 阶段1.5 sft.py                      │ quantize_sweep.py │ eval.py
         └──────────────▶ HF(微调后) ──────────┘                   ▼
                                                     spec_decode.py (draft+target 投机解码)
+
+GPU 线 (Qwen2.5-3B, RTX 4060 Ti 8GB 实测):
+┌────────────────────┐   ┌───────────────────┐   ┌───────────────────────┐   ┌──────────────────┐
+│ finetune_qlora.py  │──▶│ convert_hf_to_gguf│──▶│ llama-quantize        │──▶│ llama-server     │
+│ 4bit QLoRA + 合并   │   │ HF → GGUF (F16)   │   │ F16 → Q8_0 / Q4_K_M   │   │ -ngl 99 (GPU)    │
+└────────────────────┘   └───────────────────┘   └───────────────────────┘   └──────┬───────────┘
+                                                                          bench_quant.py (llama-bench)
 ```
 
 - **draft 模型**：默认的 3~4M 参数小模型（hidden 256 / 4 层 / GQA），CPU 即可训练。
@@ -51,6 +58,8 @@ llm_go/
 │   ├── quantize_sweep.py    # 阶段3+: imatrix 校准 + 多方案量化对比
 │   ├── eval.py              # 阶段4+: PPL / 延迟 / 吞吐 / KV cache 量化评测
 │   ├── spec_decode.py       # 阶段4+: 投机解码加速实验
+│   ├── finetune_qlora.py    # 阶段5: QLoRA 微调 Qwen2.5-3B-Instruct (GPU, 4bit + LoRA)
+│   ├── bench_quant.py       # 阶段5: llama-bench 量化加速基准 (F16/Q8_0/Q4_K_M)
 │   └── smoke_test.py        # 冒烟测试 (--hf 测 HF 模型 / --gguf 测服务)
 ├── server/
 │   ├── main.go              # 阶段4: Go 推理网关 (Gin)
@@ -77,8 +86,8 @@ cd server && go run .          # 或运行编译好的 llm-gateway.exe
 - **预设模板**：一键切换「快速跑通 / 完整实验 / 精度优先 / 端侧速度 / 自定义」，自动勾选阶段并排好顺序
 - **阶段报告**：每个阶段跑完自动生成 Markdown 报告到 `out/reports/<阶段>.md`（含关键指标、产物体积、日志与备注），另有 `run.md` 运行总结；顶栏 📄 打开抽屉直接阅读，节点卡片上也会出现「📄 报告」直达按钮
 - **日夜主题**：顶栏 ☀️/🌙 一键切换，跟随 localStorage 记忆
-- **节点画布**：数据准备 → 模型训练 → 导出 GGUF → 量化 → 启动推理服务 → 冒烟测试，六个主流程节点按拓扑序连线
-- **可选阶段**（虚线边框 + 「可选」标记）：训练 target 模型 / 指令微调 (LoRA) / 量化方案对比 / 评测基准 / 投机解码实验。
+- **节点画布**：13 个节点分三行——主流程（数据准备 → 模型训练 → 导出 GGUF → 量化 → 启动推理服务 → 冒烟测试）在顶部，进阶实验居中，Qwen2.5 GPU 线在底部，按拓扑序连线
+- **可选阶段**（虚线边框 + 「可选」标记）：训练 target 模型 / 指令微调 (LoRA) / 量化方案对比 / 评测基准 / 投机解码实验 / **Qwen2.5 QLoRA 微调**（GPU，4bit + LoRA 微调 Qwen2.5-3B-Instruct，产出合并权重）/ **量化加速基准**（llama-bench 对比 Q8_0 / Q4_K_M / Q4_K_S，报告写入 `bench/`）。
   这些阶段默认**不参与「运行全部」**，避免一键流程被额外依赖打断；点节点上的「仅运行此节点」单独执行
 - **自由编排**：拖拽节点调整位置，从右侧圆点拖到下一节点左侧圆点即可重新连线；滚轮缩放、空白处拖拽平移
 - **参数面板**：点击节点编辑参数（训练轮数、批大小、llama.cpp 路径、量化方案、服务端口、测试 Prompt、评测轮数等），也可「仅运行此节点」
@@ -330,6 +339,8 @@ curl -N http://localhost:8080/v1/chat/completions \
 
 - **导出 GGUF 节点** → `llamacpp_dir`：填第 3 步的 llama.cpp 目录（如 `D:/tools/llama.cpp`）
 - **模型训练节点** → 训练轮数等参数按需调整（默认 150）
+- **启动推理服务节点** → `model`：`models/` 下的 GGUF 文件名（默认 `tinyllm-q4_k_m.gguf`；跑微调后的
+  Qwen 填 `qwen25-3b-ft-q4_k_m.gguf`）、`ngl`：卸载到 GPU 的层数（`0` 纯 CPU、`99` 全部），另有端口 / 上下文长度
 
 网关的环境变量（可选）：
 

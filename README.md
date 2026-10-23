@@ -27,6 +27,13 @@ Stage 4    Deploy      Go gateway + llama-server  OpenAI-compatible API, streami
         │ Stage 1.5 sft.py                    │ quantize_sweep.py │ eval.py
         └──────────────▶ HF (fine-tuned) ─────┘                   ▼
                                                  spec_decode.py (draft+target speculative decoding)
+
+GPU line (Qwen2.5-3B, RTX 4060 Ti 8GB verified):
+┌────────────────────┐   ┌───────────────────┐   ┌───────────────────────┐   ┌──────────────────┐
+│ finetune_qlora.py  │──▶│ convert_hf_to_gguf│──▶│ llama-quantize        │──▶│ llama-server     │
+│ 4bit QLoRA + merge │   │ HF → GGUF (F16)   │   │ F16 → Q8_0 / Q4_K_M   │   │ -ngl 99 (GPU)    │
+└────────────────────┘   └───────────────────┘   └───────────────────────┘   └──────┬───────────┘
+                                                                          bench_quant.py (llama-bench)
 ```
 
 - **draft model**: the default 3–4M parameter model (hidden 256 / 4 layers / GQA), trainable on CPU.
@@ -52,6 +59,8 @@ llm_go/
 │   ├── quantize_sweep.py    # Stage 3+: imatrix calibration + multi-scheme quantization comparison
 │   ├── eval.py              # Stage 4+: PPL / latency / throughput / KV-cache quantization benchmark
 │   ├── spec_decode.py       # Stage 4+: speculative decoding speedup experiment
+│   ├── finetune_qlora.py    # Stage 5: QLoRA fine-tune Qwen2.5-3B-Instruct (GPU, 4-bit + LoRA)
+│   ├── bench_quant.py       # Stage 5: llama-bench quantization speed benchmark (F16/Q8_0/Q4_K_M)
 │   └── smoke_test.py        # Smoke test (--hf for the HF model / --gguf for the served endpoint)
 ├── server/
 │   ├── main.go              # Stage 4: Go inference gateway (Gin)
@@ -86,10 +95,13 @@ What the UI gives you:
   drawer with the 📄 button in the header, or jump straight there from the *📄 report* button that
   appears on each node card.
 - **Light/dark theme**: the ☀️/🌙 toggle in the header, remembered in `localStorage`.
-- **Node canvas**: six main stages — data prep → train → export GGUF → quantize → start inference
-  server → smoke test — connected in topological order.
+- **Node canvas**: 13 nodes in three rows — the main chain (data prep → train → export GGUF →
+  quantize → start inference server → smoke test) on top, advanced experiments in the middle, and
+  the Qwen2.5 GPU line at the bottom, connected in topological order.
 - **Optional stages** (dashed border + "optional" tag): train the target model / LoRA instruction
-  tuning / quantization scheme comparison / evaluation benchmark / speculative decoding experiment.
+  tuning / quantization scheme comparison / evaluation benchmark / speculative decoding experiment /
+  **Qwen2.5 QLoRA fine-tuning** (GPU, 4-bit + LoRA on Qwen2.5-3B-Instruct, merged weights output) /
+  **quantization speed benchmark** (llama-bench across Q8_0 / Q4_K_M / Q4_K_S, report to `bench/`).
   These are **excluded from "Run all" by default** so that one click never stalls on an extra
   dependency; run them individually with "Run this node only".
 - **Free-form editing**: drag nodes to reposition them, drag from the right-hand dot onto the next
@@ -368,6 +380,9 @@ two parameters in the UI:
 
 - **Export GGUF node** → `llamacpp_dir`: the llama.cpp directory from step 3 (e.g. `D:/tools/llama.cpp`)
 - **Model training node** → epochs and friends, as needed (150 by default)
+- **Start inference server node** → `model`: GGUF file name under `models/` (default
+  `tinyllm-q4_k_m.gguf`; set `qwen25-3b-ft-q4_k_m.gguf` for the fine-tuned Qwen), `ngl`: layers
+  offloaded to GPU (`0` = CPU, `99` = all), plus port / context size
 
 Optional gateway environment variables:
 
