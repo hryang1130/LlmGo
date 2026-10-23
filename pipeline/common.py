@@ -424,6 +424,62 @@ def stage_report(stage: str, *, summary: str = "", metrics: dict | None = None,
     return out
 
 
+# --------------------------------------------------------------------------- #
+# 结构化实验报告: 机器可读的统一 JSON (对比实验用)
+#
+# 约定:
+#   * 写到 out/experiments/<experiment>.json, 带 --label 时为
+#     <experiment>__<label>.json (对比时一列一个 label)
+#   * schema 固定 llm_go.experiment/1, compare.py 按它合并多份结果
+#   * metrics: 实验级的关键标量; rows: 每个对象 (方案/模型/配置) 一行,
+#     key 指定行主键列名, 相同 key 的实验可被 compare.py 逐列对齐
+# --------------------------------------------------------------------------- #
+EXPERIMENTS_DIR = ROOT / "out" / "experiments"
+EXPERIMENT_SCHEMA = "llm_go.experiment/1"
+
+
+def write_experiment(name: str, *, label: str | None = None,
+                     config: dict | None = None, metrics: dict | None = None,
+                     rows: list[dict] | None = None, key: str = "",
+                     artifacts: list[str | Path] | None = None,
+                     duration: float | None = None,
+                     out_dir: str | Path | None = None) -> Path:
+    """写一份结构化实验报告 (JSON), 供 compare.py 与外部工具消费。
+
+    Args:
+        name:      实验类型 (eval / sweep / spec / bench / ...), 决定文件名前缀
+        label:     实验标签 (如 "q4km-base", "sft-v2"), 用于对比时区分多次运行
+        config:    实验配置 (扁平 dict, 值可为标量或字符串)
+        metrics:   实验级关键指标 (扁平标量 dict)
+        rows:      行级数据, 每行一个 dict (如每个量化方案/每个模型一条)
+        key:       rows 的主键列名 (compare.py 按它对齐不同实验的行)
+        artifacts: 产物路径列表
+        duration:  实验耗时秒数
+        out_dir:   输出目录, 默认 out/experiments
+    """
+    d = Path(out_dir) if out_dir else EXPERIMENTS_DIR
+    d.mkdir(parents=True, exist_ok=True)
+    fname = f"{name}__{label}.json" if label else f"{name}.json"
+    doc = {
+        "schema": EXPERIMENT_SCHEMA,
+        "experiment": name,
+        "label": label or name,
+        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "duration_s": round(duration, 1) if duration is not None else None,
+        "config": {k: (v if isinstance(v, (int, float, bool)) or v is None else str(v))
+                   for k, v in (config or {}).items()},
+        "metrics": metrics or {},
+        "key": key,
+        "rows": rows or [],
+        "artifacts": [str(a) for a in (artifacts or [])],
+    }
+    out = d / fname
+    out.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8",
+                   newline="\n")
+    print(f"[experiment] 结构化结果: {out.relative_to(ROOT).as_posix()}")
+    return out
+
+
 def _register_report(stage: str, path: Path, title: str, ok: bool) -> None:
     """把报告登记进 index.json, 并刷新人类可读的 index.md。"""
     data = {}

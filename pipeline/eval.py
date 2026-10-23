@@ -39,7 +39,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (  # noqa: E402
     ROOT, cfg_get, find_binary, free_port, http_json, load_config, markdown_table,
     process_memory_mb, read_log, resolve_path, run, size_mb, stage_report,
-    try_find_binary, wait_for_http, write_report,
+    try_find_binary, wait_for_http, write_experiment, write_report,
 )
 
 PROMPT = "人工智能是计算机科学的一个分支，"
@@ -62,6 +62,7 @@ def parse_args():
     p.add_argument("--baseline", default=None, help="基线模型路径 (默认取 F16, 用于算相对变化)")
     p.add_argument("--out", default="out/benchmark.md", help="报告输出路径")
     p.add_argument("--json-out", default="out/benchmark.json", help="JSON 结果路径")
+    p.add_argument("--label", default=None, help="实验标签: 写入 out/experiments/eval__<label>.json, 供 compare.py 对比")
     p.add_argument("--check", action="store_true", help="只做环境自检")
     return p.parse_args()
 
@@ -408,6 +409,27 @@ def main():
         notes="PPL 变化是量化损失的直接指标（4bit 通常高几个百分点）；解码吞吐决定端侧体感速度。"
               + ("\n\n> 本次有模型的 PPL 未取到，检查评测语料长度是否 ≥ 2×上下文。"
                  if len([r for r in results if not r.get("ppl")]) == len(results) else ""),
+    )
+
+    write_experiment(
+        "eval", label=args.label,
+        config={"ctx": ctx, "max_tokens": max_tokens, "rounds": rounds,
+                "kv_quant": bool(getattr(args, "kv_quant", False)),
+                "corpus": corpus.name},
+        metrics={"n_models": len(results),
+                 "best_decode_tok_s": fastest["decode_tok_s"] if fastest else None},
+        rows=[{
+            "model": r["model"],
+            "size_mb": round(r["size_mb"], 2) if r.get("size_mb") else None,
+            "ppl": round(r["ppl"], 3) if r.get("ppl") else None,
+            "ttft_ms": r.get("ttft_ms"),
+            "prefill_tok_s": round(r["prefill_tok_s"], 1) if r.get("prefill_tok_s") else None,
+            "decode_tok_s": round(r["decode_tok_s"], 1) if r.get("decode_tok_s") else None,
+            "kv_q8_decode_tok_s": round(r["kv_q8"]["decode_tok_s"], 1) if r.get("kv_q8", {}).get("decode_tok_s") else None,
+            "server_rss_mb": round(r["server_rss_mb"], 0) if r.get("server_rss_mb") else None,
+        } for r in results],
+        key="model",
+        artifacts=[Path(r["path"]) for r in results if r.get("path")] + [json_path],
     )
 
 

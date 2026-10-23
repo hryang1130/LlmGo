@@ -37,7 +37,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from common import (  # noqa: E402
     ROOT, cfg_get, find_binary, load_config, markdown_table, read_log,
-    resolve_path, run, size_mb, stage_report, try_find_binary, write_report,
+    resolve_path, run, size_mb, stage_report, try_find_binary, write_experiment,
+    write_report,
 )
 
 DEFAULT_SCHEMES = ["Q8_0", "Q4_K_M", "Q4_K_S", "IQ4_XS"]
@@ -58,6 +59,7 @@ def parse_args():
     p.add_argument("--imatrix-strict", action="store_true",
                    help="imatrix 失败时直接退出 (默认降级为普通量化)")
     p.add_argument("--out", default="out/quantize_sweep.md", help="报告输出路径")
+    p.add_argument("--label", default=None, help="实验标签: 写入 out/experiments/sweep__<label>.json, 供 compare.py 对比")
     p.add_argument("--force", action="store_true", help="已存在的量化产物也重跑")
     p.add_argument("--check", action="store_true", help="只做环境自检")
     return p.parse_args()
@@ -286,6 +288,29 @@ def main():
         links=[("完整报告 (体积/压缩倍数/结论)", "quantize_sweep.md")],
         notes="体积只说明能不能装下；**精度要看评测基准节点（PPL 对比）**。"
               "带 imatrix 的 4bit 通常同体积下困惑度更低。",
+    )
+
+    exp_rows = []
+    for r in results:
+        ok_r = not r.get("error") and r.get("size") == r.get("size")
+        exp_rows.append({
+            "scheme": r["scheme"],
+            "size_mb": round(r["size"], 2) if ok_r else None,
+            "ratio_to_f16": round(r["size"] / f16_mb, 4) if ok_r and f16_mb else None,
+            "compression": round(f16_mb / r["size"], 2) if ok_r and r.get("size") else None,
+            "imatrix": bool(r.get("imatrix")),
+            "seconds": round(r["seconds"], 1) if r.get("seconds") else None,
+            "error": r.get("error"),
+        })
+    write_experiment(
+        "sweep", label=args.label,
+        config={"input": f16.name, "input_mb": round(f16_mb, 2),
+                "schemes": ",".join(schemes), "imatrix": bool(imatrix),
+                "quantizer": str(quantizer)},
+        metrics={"n_schemes": len(results),
+                 "smallest_mb": round(smallest, 2) if smallest == smallest else None},
+        rows=exp_rows, key="scheme",
+        artifacts=[r["path"] for r in results if r.get("path")] + [f16],
     )
 
     failed = [r["scheme"] for r in results if r.get("error")]

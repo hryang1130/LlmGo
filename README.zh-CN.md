@@ -60,6 +60,7 @@ llm_go/
 │   ├── spec_decode.py       # 阶段4+: 投机解码加速实验
 │   ├── finetune_qlora.py    # 阶段5: QLoRA 微调 Qwen2.5-3B-Instruct (GPU, 4bit + LoRA)
 │   ├── bench_quant.py       # 阶段5: llama-bench 量化加速基准 (F16/Q8_0/Q4_K_M)
+│   ├── compare.py           # 汇总 out/experiments/*.json 生成跨次实验对比报告
 │   └── smoke_test.py        # 冒烟测试 (--hf 测 HF 模型 / --gguf 测服务)
 ├── server/
 │   ├── main.go              # 阶段4: Go 推理网关 (Gin)
@@ -252,6 +253,27 @@ python pipeline/bench_quant.py --llama-cpp D:/tools/llama.cpp
 F16 仅 13.5 tok/s，Q4 达 108 tok/s（8 倍）。完整数据见 `bench/report.md`。
 
 > 加载 3B 模型需要约 10GB 内存/页面文件配额；若报「页面文件太小」，请扩容虚拟内存或关闭大内存程序。
+
+## 结构化实验报告与跨次对比
+
+基准脚本除 Markdown 报告外，还能输出机器可读的实验记录：加 `--label <名字>`，就会写
+`out/experiments/<脚本>__<label>.json`（schema `llm_go.experiment/1` = 配置 + 实验级指标 +
+按 `scheme`/`model`/`variant` 主键组织的行级数据）。`eval.py`、`quantize_sweep.py`、
+`spec_decode.py`、`bench_quant.py` 均已支持。
+
+```bash
+# 给要对比的每次实验打上 label
+python pipeline/eval.py --label base-v1
+python pipeline/eval.py --label sft-v2 --models models/tinyllm-sft-q4_k_m.gguf
+
+# 合并成一张横向对比表（可指定基线 label, 数值列附相对变化百分比）
+python pipeline/compare.py --baseline base-v1
+# 只看部分指标:   python pipeline/compare.py --baseline base-v1 --metrics decode_tok_s,ppl
+# 显式指定文件:   python pipeline/compare.py --files out/experiments/a.json out/experiments/b.json
+```
+
+产物：`out/comparison.md`（对比表；同时同步一份到 `out/reports/comparison.md`，
+界面 📄 报告抽屉里直接可见）和 `out/comparison.json`（机器可读版，可直接画图）。
 
 ## 手动安装部署教程
 

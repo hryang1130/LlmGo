@@ -19,6 +19,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from common import write_experiment  # noqa: E402
 
 
 def find_binary(llama_cpp: Path, name: str) -> Path:
@@ -65,6 +68,7 @@ def main():
     p.add_argument("--tg", type=int, default=128, help="decode 生成的 token 数")
     p.add_argument("--reps", type=int, default=3)
     p.add_argument("--out", type=Path, default=ROOT / "bench")
+    p.add_argument("--label", default=None, help="实验标签: 写入 out/experiments/bench__<label>.json, 供 compare.py 对比")
     args = p.parse_args()
 
     if args.gguf:
@@ -131,6 +135,27 @@ def main():
     md = "\n".join(lines)
     (args.out / "bench.md").write_text(md + "\n", encoding="utf-8")
     print("\n" + md)
+
+    exp_rows = []
+    for name, e in sorted(by_model.items(), key=lambda kv: -kv[1].get("decode_ts", 0)):
+        dec = e.get("decode_ts", 0)
+        exp_rows.append({
+            "model": name,
+            "type": e.get("type", ""),
+            "size_gb": round(e["size"] / 1e9, 3) if e["size"] else None,
+            "prompt_ts": round(e["prompt_ts"], 1) if e.get("prompt_ts") else None,
+            "decode_ts": round(dec, 1) if dec else None,
+            "speedup_vs_f16": round(dec / base_decode, 3) if base_decode and dec else None,
+        })
+    write_experiment(
+        "bench", label=args.label,
+        config={"ngl": args.ngl, "pp": args.pp, "tg": args.tg, "reps": args.reps,
+                "models": ",".join(m.name for m in models)},
+        metrics={"n_models": len(exp_rows),
+                 "best_decode_ts": max((r["decode_ts"] or 0) for r in exp_rows) if exp_rows else None},
+        rows=exp_rows, key="model",
+        artifacts=[args.out / "bench.json", args.out / "bench.md"],
+    )
 
 
 if __name__ == "__main__":

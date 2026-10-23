@@ -36,7 +36,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from common import (  # noqa: E402
     ROOT, cfg_get, find_binary, http_json, http_text, load_config, markdown_table,
-    resolve_path, size_mb, stage_report, supports_flag, try_find_binary, write_report,
+    resolve_path, size_mb, stage_report, supports_flag, try_find_binary,
+    write_experiment, write_report,
 )
 from eval import PROMPT, Server  # noqa: E402  复用服务管理与提示词
 
@@ -60,6 +61,7 @@ def parse_args():
     p.add_argument("--rounds", type=int, default=None, help="每组的测量轮数, 取中位数")
     p.add_argument("--ctx-size", type=int, default=None, help="上下文长度")
     p.add_argument("--out", default="out/spec_decode.md", help="报告输出路径")
+    p.add_argument("--label", default=None, help="实验标签: 写入 out/experiments/spec__<label>.json, 供 compare.py 对比")
     p.add_argument("--check", action="store_true", help="只做环境自检")
     return p.parse_args()
 
@@ -281,6 +283,27 @@ def main():
         links=[("完整报告 (含调参建议)", "spec_decode.md")],
         notes="draft 与 target **必须共用分词器**（脚本会先校验词表大小）。"
               "接受率过低时可调小最大猜测数或提高 draft_p_min 重跑。",
+    )
+
+    write_experiment(
+        "spec", label=args.label,
+        config={"draft": draft.name, "target": target.name,
+                "draft_max": draft_max, "draft_min": draft_min,
+                "p_min": p_min, "ctx": ctx, "max_tokens": max_tokens,
+                "rounds": rounds},
+        metrics={"speedup": round(speedup, 3) if speedup else None,
+                 "accept_rate": round(spec["accept_rate"], 4) if spec.get("accept_rate") else None,
+                 "base_decode_tok_s": base.get("decode_tok_s"),
+                 "spec_decode_tok_s": spec.get("decode_tok_s")},
+        rows=[
+            {"variant": "baseline", "decode_tok_s": base.get("decode_tok_s"),
+             "ttft_ms": base.get("ttft_ms"), "speedup": None, "accept_rate": None},
+            {"variant": "speculative", "decode_tok_s": spec.get("decode_tok_s"),
+             "ttft_ms": spec.get("ttft_ms"),
+             "speedup": round(speedup, 3) if speedup else None,
+             "accept_rate": round(spec["accept_rate"], 4) if spec.get("accept_rate") else None},
+        ],
+        key="variant", artifacts=[draft, target],
     )
 
 

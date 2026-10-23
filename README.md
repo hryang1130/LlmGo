@@ -61,6 +61,7 @@ llm_go/
 │   ├── spec_decode.py       # Stage 4+: speculative decoding speedup experiment
 │   ├── finetune_qlora.py    # Stage 5: QLoRA fine-tune Qwen2.5-3B-Instruct (GPU, 4-bit + LoRA)
 │   ├── bench_quant.py       # Stage 5: llama-bench quantization speed benchmark (F16/Q8_0/Q4_K_M)
+│   ├── compare.py           # Merges out/experiments/*.json into a cross-run comparison report
 │   └── smoke_test.py        # Smoke test (--hf for the HF model / --gguf for the served endpoint)
 ├── server/
 │   ├── main.go              # Stage 4: Go inference gateway (Gin)
@@ -288,6 +289,29 @@ make sft → export+quantize → make eval again     # Compare perplexity and ou
 
 Every step leaves a Markdown report under `out/`, ready to use as an experiment log or to fold into
 a write-up.
+
+## Structured experiment reports & cross-run comparison
+
+Benchmark scripts can emit a machine-readable experiment record next to their Markdown
+report: pass `--label <name>` and each writes `out/experiments/<script>__<label>.json`
+(schema `llm_go.experiment/1` = config + headline metrics + per-row measurements keyed
+by `scheme` / `model` / `variant`). Supported by `eval.py`, `quantize_sweep.py`,
+`spec_decode.py` and `bench_quant.py`.
+
+```bash
+# run the configs you want to compare, each with a label
+python pipeline/eval.py --label base-v1
+python pipeline/eval.py --label sft-v2 --models models/tinyllm-sft-q4_k_m.gguf
+
+# merge them into one side-by-side comparison (+ % change vs a baseline label)
+python pipeline/compare.py --baseline base-v1
+# only certain metrics:  python pipeline/compare.py --baseline base-v1 --metrics decode_tok_s,ppl
+# explicit files:        python pipeline/compare.py --files out/experiments/a.json out/experiments/b.json
+```
+
+Artifacts: `out/comparison.md` (side-by-side tables; also copied to
+`out/reports/comparison.md` so it shows up in the UI report drawer) and
+`out/comparison.json` (same content, machine-readable, ready for plotting).
 
 ## Manual installation and deployment
 
