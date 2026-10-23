@@ -316,6 +316,8 @@ STAGE_TITLES = {
     "spec": "投机解码实验报告",
     "deploy": "推理服务部署报告",
     "test": "服务冒烟测试报告",
+    "experiments": "实验总览",
+    "compare": "实验对比报告",
 }
 
 
