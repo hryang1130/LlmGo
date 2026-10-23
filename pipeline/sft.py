@@ -32,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from common import (  # noqa: E402
     ROOT, cfg_get, load_config, resolve_path, size_mb, stage_report,
+    write_experiment,
 )
 
 PROMPT_TMPL = "### 指令：\n{instruction}\n### 回答：\n{output}"
@@ -50,6 +51,7 @@ def parse_args():
     p.add_argument("--max-length", type=int, default=None, help="单条样本最大 token 数")
     p.add_argument("--lora-r", type=int, default=None)
     p.add_argument("--no-merge", action="store_true", help="只保存适配器, 不合并进 base 权重")
+    p.add_argument("--label", default=None, help="实验标签: 写入 out/experiments/sft__<label>.json, 供 compare.py 对比")
     p.add_argument("--check", action="store_true", help="只做数据与配置自检")
     return p.parse_args()
 
@@ -241,6 +243,19 @@ def main():
         notes="合并后的模型走同一条导出/量化链路："
               "`python pipeline/write_gguf.py --hf-dir models/tinyllm-hf-sft "
               "--out models/tinyllm-sft-f16.gguf`，再用 llama-quantize 量化。",
+    )
+
+    history = [h for h in trainer.state.log_history if "train_loss" in h]
+    write_experiment(
+        "sft", label=args.label,
+        config={"base": base_dir.name, "samples": len(records),
+                "epochs": args.epochs, "steps": args.steps or None,
+                "lora_r": args.lora_r, "device": device},
+        metrics={"final_train_loss": round(loss, 4) if loss is not None else None,
+                 "trainable_params": trainable,
+                 "trainable_ratio": round(trainable / max(total, 1), 5)},
+        rows=[{"step": h.get("step"), "loss": round(h["train_loss"], 4)} for h in history],
+        key="step", artifacts=[adapter_dir] + ([] if args.no_merge else [out_dir]),
     )
 
 

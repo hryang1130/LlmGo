@@ -21,6 +21,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -220,10 +221,11 @@ def free_port(start: int = 18080) -> int:
 
 def wait_for_http(url: str, timeout: float = 90.0) -> bool:
     """轮询直到服务可用 (llama-server 启动需要加载权重的时间)。"""
+    opener = _opener_for(url)
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            with urllib.request.urlopen(url, timeout=3):
+            with opener.open(url, timeout=3):
                 return True
         except urllib.error.HTTPError:
             return True          # 有响应即视为可用
@@ -232,17 +234,29 @@ def wait_for_http(url: str, timeout: float = 90.0) -> bool:
     return False
 
 
+def _opener_for(url: str):
+    """本机地址 (127.0.0.1/localhost) 强制直连, 绕开 http_proxy 环境变量。
+
+    某些环境 (沙箱/系统代理) 会给 shell 注入 http_proxy, 连 127.0.0.1 的
+    llama-server 都被劫持成 502; 对本机回环地址必须绕过代理。
+    """
+    host = urllib.parse.urlsplit(url).hostname or ""
+    if host in ("127.0.0.1", "localhost", "::1"):
+        return urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    return urllib.request.build_opener()
+
+
 def http_json(url: str, payload: dict | None = None, timeout: int = 180):
     data = json.dumps(payload).encode() if payload is not None else None
     req = urllib.request.Request(
         url, data=data, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with _opener_for(url).open(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8", "replace"))
 
 
 def http_text(url: str, timeout: int = 30) -> str:
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp:
+        with _opener_for(url).open(url, timeout=timeout) as resp:
             return resp.read().decode("utf-8", "replace")
     except Exception:
         return ""
@@ -318,6 +332,7 @@ STAGE_TITLES = {
     "test": "服务冒烟测试报告",
     "experiments": "实验总览",
     "compare": "实验对比报告",
+    "matrix": "实验矩阵",
 }
 
 
