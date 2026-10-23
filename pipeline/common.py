@@ -336,6 +336,8 @@ STAGE_TITLES = {
     "experiments": "实验总览",
     "compare": "实验对比报告",
     "matrix": "实验矩阵",
+    "qwen_tracks": "Qwen 双轨输出对比",
+    "qwen_report": "Qwen2.5-3B 全面对比报告",
 }
 
 

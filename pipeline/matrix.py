@@ -53,6 +53,9 @@ MATRIX = [
              "python pipeline/eval.py --models models/qwen25-3b-ft-q4_k_m.gguf --label qwen-eval"),
             ("imatrix 方案对比", ["experiment:sweep_qwen"],
              "python pipeline/quantize_sweep.py --input models/qwen25-3b-ft-f16.gguf --label qwen-sweep"),
+            ("投机解码 (draft=Qwen2.5-0.5B)", ["experiment:spec"],
+             "python pipeline/spec_decode.py --draft models/qwen2.5-0.5b-instruct-q4_k_m.gguf "
+             "--target models/qwen25-3b-ft-q4_k_m.gguf --ngl 99 --server <bin-cuda/llama-server>"),
         ],
     },
     {

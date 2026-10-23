@@ -61,6 +61,8 @@ def parse_args():
     p.add_argument("--rounds", type=int, default=None, help="每组的测量轮数, 取中位数")
     p.add_argument("--ctx-size", type=int, default=None, help="上下文长度")
     p.add_argument("--out", default="out/spec_decode.md", help="报告输出路径")
+    p.add_argument("--ngl", type=int, default=None,
+                   help="GPU 卸载层数 (target 用 -ngl, draft 用 -ngl-draft); 不传则纯 CPU")
     p.add_argument("--label", default=None, help="实验标签: 写入 out/experiments/spec__<label>.json, 供 compare.py 对比")
     p.add_argument("--check", action="store_true", help="只做环境自检")
     return p.parse_args()
@@ -212,12 +214,24 @@ def main():
     if n_max_flag == "--draft-max":
         print("[spec] 该 llama-server 使用旧版投机解码参数名 (--draft-max/--draft-min)")
 
+    gpu = []
+    if args.ngl is not None:
+        # draft 的 GPU 卸载参数名随 llama.cpp 版本变过, 探测可用项
+        draft_flag = next((f for f in ("-ngld", "--gpu-layers-draft", "-ngl-draft")
+                           if supports_flag(binary, f)), None)
+        if args.ngl and draft_flag is None:
+            print("[spec] 该 llama-server 不支持 draft 模型 GPU 卸载, draft 走 CPU")
+        gpu = ["-ngl", str(args.ngl)] + ([draft_flag, str(args.ngl)] if draft_flag else [])
+
     print("\n[spec] 基线 (target 单独推理)")
-    base = measure(binary, target, ctx, max_tokens, rounds, tag="base")
+    base = measure(binary, target, ctx, max_tokens, rounds, extra=gpu, tag="base")
     print(f"    -> decode {base['decode_tok_s']} tok/s, TTFT {base['ttft_ms']} ms")
 
     print("\n[spec] 投机解码 (target + draft)")
-    extra = [n_max_flag, str(draft_max), n_min_flag, str(draft_min)]
+    # 新版 llama.cpp 需要显式开启投机解码类型 (默认 none), 旧版没有该参数
+    spec_type = (["--spec-type", "draft-simple"]
+                 if supports_flag(binary, "--spec-type") else [])
+    extra = gpu + spec_type + [n_max_flag, str(draft_max), n_min_flag, str(draft_min)]
     if p_min is not None:
         extra += [p_min_flag, str(p_min)]
     spec = measure(binary, target, ctx, max_tokens, rounds,
